@@ -4,9 +4,9 @@ from utils import load_data, CharTokenizer
 from model import TinyTransformer
 
 BATCH_SIZE = 64
-BLOCK_SIZE = 64
-EPOCHS = 3000
-LR = 1e-3
+BLOCK_SIZE = 128
+EPOCHS = 3500
+LR = 3e-4
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 text = load_data("dataset.txt")
@@ -20,7 +20,12 @@ def get_batch():
     y = torch.stack([data[i+1:i+BLOCK_SIZE+1] for i in ix])
     return x.to(DEVICE), y.to(DEVICE)
 
-model = TinyTransformer(vocab_size=tokenizer.vocab_size).to(DEVICE)
+model = TinyTransformer(
+    vocab_size=tokenizer.vocab_size, 
+    embed_dim=128,  
+    num_layers=6     
+).to(DEVICE)
+
 optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
 for epoch in range(EPOCHS):

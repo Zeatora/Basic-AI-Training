@@ -121,6 +121,7 @@ class TinyTransformer(nn.Module):
             for i in range(num_layers)
         ])
         
+        self.final_norm = RMSNorm(embed_dim)
         self.fc = nn.Linear(embed_dim, vocab_size)
 
     def forward(self, x):
@@ -138,5 +139,6 @@ class TinyTransformer(nn.Module):
         for layer in self.layers:
             blocks, partial_block = layer(blocks, partial_block)
 
+        final_out = self.final_norm(partial_block)
         logits = self.fc(partial_block)
         return logits
