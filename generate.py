@@ -51,12 +51,20 @@ print("=" * 50)
 
 while True:
     user_input = input("\nYou: ")
-    if user_input.lower() == 'quit':
+    
+    # FIX 1: Added .strip() so accidental trailing spaces don't break the quit command!
+    if user_input.strip().lower() == 'quit':
         print("Farewell!")
         break
     
-    prompt = f"\n{user_input.upper()}:\n"
+    # FIX 2: Simplified the prompt. 
+    # Your old code did `prompt = f"\n{user_input.upper()}:\n"`
+    # If you typed "hi", it fed the AI "\nHI:\n". Shakespeare doesn't use all-caps 
+    # words with colons like that, so the AI got confused and stayed silent.
+    prompt = user_input.strip() + " "
     
-    response = generate_text(model, start=prompt, length=400, temperature=0.8, top_p=0.9)
+    # FIX 3: Lowered length to 150. Generating 400 characters one-by-one is what 
+    # caused your terminal to feel completely frozen while it was "thinking".
+    response = generate_text(model, start=prompt, length=150, temperature=0.8, top_p=0.9)
     
-    print(f"\nAI:{response[len(prompt):]}")
+    print(f"\nAI: {response[len(prompt):]}")

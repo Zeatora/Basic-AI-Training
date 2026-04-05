@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn.functional as F
 from utils import load_data, CharTokenizer
@@ -28,9 +29,16 @@ model = TinyTransformer(
 
 optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
+CHECKPOINT_FILE = "shakespeare_model.pth"
+
+if os.path.exists(CHECKPOINT_FILE):
+    print(f"Found existing checkpoint! Loading {CHECKPOINT_FILE} to resume training...")
+    model.load_state_dict(torch.load(CHECKPOINT_FILE, weights_only=True))
+else:
+    print("No checkpoint found. Starting training from scratch...")
+
 for epoch in range(EPOCHS):
     x, y = get_batch()
-
     logits = model(x)
 
     loss = F.cross_entropy(
@@ -40,10 +48,17 @@ for epoch in range(EPOCHS):
 
     optimizer.zero_grad()
     loss.backward()
+    
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
     optimizer.step()
 
     if epoch % 200 == 0:
         print(f"Epoch {epoch}, Loss: {loss.item():.4f}")
+        
+    if epoch > 0 and epoch % 1000 == 0:
+        torch.save(model.state_dict(), CHECKPOINT_FILE)
+        print(f"--> Checkpoint auto-saved at epoch {epoch}")
 
 def generate(model, start="T", length=100):
     model.eval()
