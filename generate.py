@@ -16,7 +16,7 @@ model.eval()
 
 print("Model loaded successfully!\n")
 
-def generate_text(model, start="O Romeo", length=200, temperature=0.8):
+def generate_text(model, start="To be, or not", length=200, temperature=0.8):
     x = torch.tensor([tokenizer.encode(start)], dtype=torch.long).to(DEVICE)
 
     for _ in range(length):

@@ -27,23 +27,37 @@ def block_attn_res(blocks: list[torch.Tensor], partial_block: torch.Tensor, proj
     
     return h
 
-# --- Self Attention ---
-class SelfAttention(nn.Module):
-    def __init__(self, embed_dim):
+class MultiHeadAttention(nn.Module):
+    def __init__(self, embed_dim, num_heads=4):
         super().__init__()
+        assert embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
+
         self.query = nn.Linear(embed_dim, embed_dim)
         self.key = nn.Linear(embed_dim, embed_dim)
         self.value = nn.Linear(embed_dim, embed_dim)
 
+        self.proj = nn.Linear(embed_dim, embed_dim)
+
     def forward(self, x):
-        Q = self.query(x)
-        K = self.key(x)
-        V = self.value(x)
-
-        attn = Q @ K.transpose(-2, -1) / (x.size(-1) ** 0.5)
+        B, T, C = x.size()
+        
+        Q = self.query(x).view(B, T, self.num_heads, self.head_dim).transpose(1, 2) 
+        K = self.key(x).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+        V = self.value(x).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+        
+        attn = (Q @ K.transpose(-2, -1)) / (self.head_dim ** 0.5) 
+        
+        mask = torch.tril(torch.ones(T, T, device=x.device)).view(1, 1, T, T)
+        attn = attn.masked_fill(mask == 0, float('-inf'))
+        
         attn = F.softmax(attn, dim=-1)
-
-        return attn @ V
+        out = attn @ V 
+        
+        out = out.transpose(1, 2).contiguous().view(B, T, C)
+        
+        return self.proj(out)
 
 class FeedForward(nn.Module):
     def __init__(self, embed_dim):
@@ -64,7 +78,7 @@ class TransformerLayer(nn.Module):
         self.layer_number = layer_number
         self.block_size = block_size
         
-        self.attn = SelfAttention(embed_dim)
+        self.attn = MultiHeadAttention(embed_dim, num_heads=4)
         self.attn_norm = RMSNorm(embed_dim)
         self.attn_res_proj = nn.Linear(embed_dim, 1, bias=False)
         self.attn_res_norm = RMSNorm(embed_dim)
