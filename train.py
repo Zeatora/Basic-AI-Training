@@ -3,9 +3,9 @@ import torch.nn.functional as F
 from utils import load_data, CharTokenizer
 from model import TinyTransformer
 
-BATCH_SIZE = 16
-BLOCK_SIZE = 32
-EPOCHS = 200
+BATCH_SIZE = 64
+BLOCK_SIZE = 64
+EPOCHS = 3000
 LR = 1e-3
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -37,7 +37,7 @@ for epoch in range(EPOCHS):
     loss.backward()
     optimizer.step()
 
-    if epoch % 20 == 0:
+    if epoch % 200 == 0:
         print(f"Epoch {epoch}, Loss: {loss.item():.4f}")
 
 def generate(model, start="T", length=100):
@@ -45,28 +45,26 @@ def generate(model, start="T", length=100):
     x = torch.tensor([tokenizer.encode(start)], dtype=torch.long).to(DEVICE)
 
     for _ in range(length):
-        logits = model(x)
-        temperature = 1.2
+        x_cond = x[:, -BLOCK_SIZE:] 
+        
+        logits = model(x_cond)
+        
+        temperature = 0.8 
         probs = F.softmax(logits[:, -1, :] / temperature, dim=-1)
 
-        if x.shape[1] > 5:
-            last_token = x[0, -1]
-            probs[0, last_token] *= 0.3
-
-            
         top_k = 10
         values, indices = torch.topk(probs, top_k)
         probs_filtered = torch.zeros_like(probs).scatter_(1, indices, values)
         probs_filtered = probs_filtered / probs_filtered.sum(dim=-1, keepdim=True)
 
-        
-
         next_token = torch.multinomial(probs_filtered, num_samples=1)
 
         x = torch.cat([x, next_token], dim=1)
         
-
     return tokenizer.decode(x[0].tolist())
 
 print("\nGenerated Text:\n")
 print(generate(model, start="T"))
+
+torch.save(model.state_dict(), "shakespeare_model.pth")
+print("\nModel saved successfully to shakespeare_model.pth!")

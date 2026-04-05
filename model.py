@@ -2,6 +2,31 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+class RMSNorm(nn.Module):
+    def __init__(self, dim, eps=1e-6):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x):
+        norm_x = torch.mean(x * x, dim=-1, keepdim=True)
+        x_normed = x * torch.rsqrt(norm_x + self.eps)
+        return self.weight * x_normed
+
+def block_attn_res(blocks: list[torch.Tensor], partial_block: torch.Tensor, proj: nn.Linear, norm: RMSNorm) -> torch.Tensor:
+    """Inter-block attention: attend over block reps + partial sum."""
+    
+    v_list = blocks + ([partial_block] if partial_block is not None else [])
+    V = torch.stack(v_list)  
+    K = norm(V)
+    
+    w = proj.weight.squeeze() 
+    
+    logits = torch.einsum('d, n b t d -> n b t', w, K)
+    h = torch.einsum('n b t, n b t d -> b t d', logits.softmax(dim=0), V)
+    
+    return h
+
 # --- Self Attention ---
 class SelfAttention(nn.Module):
     def __init__(self, embed_dim):
@@ -33,48 +58,55 @@ class FeedForward(nn.Module):
         return self.net(x)
 
 
-class AttentionResidualBlock(nn.Module):
-    def __init__(self, embed_dim, num_layers=4):
+class TransformerLayer(nn.Module):
+    def __init__(self, embed_dim, layer_number, block_size):
         super().__init__()
-        self.embed_dim = embed_dim
-        self.num_layers = num_layers
-
+        self.layer_number = layer_number
+        self.block_size = block_size
+        
         self.attn = SelfAttention(embed_dim)
-        self.ff = FeedForward(embed_dim)
+        self.attn_norm = RMSNorm(embed_dim)
+        self.attn_res_proj = nn.Linear(embed_dim, 1, bias=False)
+        self.attn_res_norm = RMSNorm(embed_dim)
+        
+        self.mlp = FeedForward(embed_dim)
+        self.mlp_norm = RMSNorm(embed_dim)
+        self.mlp_res_proj = nn.Linear(embed_dim, 1, bias=False)
+        self.mlp_res_norm = RMSNorm(embed_dim)
 
-        self.layer_query = nn.Linear(embed_dim, embed_dim)
-        self.layer_key = nn.Linear(embed_dim, embed_dim)
-
-    def forward(self, x):
-        states = [x]
-
-        for _ in range(self.num_layers):
-            current = states[-1]
-
-            out = current + self.attn(current)
-            out = out + self.ff(out)
-
-            states.append(out)
-
-        stacked = torch.stack(states, dim=1)  
-
-        q = self.layer_query(states[-1]).unsqueeze(1)  
-        k = self.layer_key(stacked)                    
-
-        attn = (q * k).sum(-1) / (self.embed_dim ** 0.5)
-        attn = torch.softmax(attn, dim=1)
-
-        attn = attn.unsqueeze(-1)
-        out = (attn * stacked).sum(1)
-
-        return out
+        nn.init.zeros_(self.attn_res_proj.weight)
+        nn.init.zeros_(self.mlp_res_proj.weight)
+        
+    def forward(self, blocks, hidden_states):
+        partial_block = hidden_states
+        
+        h = block_attn_res(blocks, partial_block, self.attn_res_proj, self.attn_res_norm)
+        
+        if self.layer_number % (self.block_size // 2) == 0:
+            blocks.append(partial_block)
+            partial_block = None
+            
+        attn_out = self.attn(self.attn_norm(h))
+        partial_block = partial_block + attn_out if partial_block is not None else attn_out
+        
+        h = block_attn_res(blocks, partial_block, self.mlp_res_proj, self.mlp_res_norm)
+        
+        mlp_out = self.mlp(self.mlp_norm(h))
+        partial_block = partial_block + mlp_out
+        
+        return blocks, partial_block
 
 class TinyTransformer(nn.Module):
-    def __init__(self, vocab_size, embed_dim=64):
+    def __init__(self, vocab_size, embed_dim=64, num_layers=4, block_size=2):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, embed_dim)
         self.pos_embedding = nn.Embedding(512, embed_dim)
-        self.block = AttentionResidualBlock(embed_dim)
+        
+        self.layers = nn.ModuleList([
+            TransformerLayer(embed_dim, layer_number=i, block_size=block_size) 
+            for i in range(num_layers)
+        ])
+        
         self.fc = nn.Linear(embed_dim, vocab_size)
 
     def forward(self, x):
@@ -84,7 +116,13 @@ class TinyTransformer(nn.Module):
         pos = torch.arange(T, device=x.device)
         pos_emb = self.pos_embedding(pos)
 
-        x = token_emb + pos_emb
-        x = self.block(x)
-        logits = self.fc(x)
+        h = token_emb + pos_emb
+        
+        blocks = [h]
+        partial_block = h
+        
+        for layer in self.layers:
+            blocks, partial_block = layer(blocks, partial_block)
+
+        logits = self.fc(partial_block)
         return logits
